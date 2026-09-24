@@ -1,9 +1,8 @@
 import React, { useState, useRef, useEffect } from 'react';
 
-// Antes apuntaba a /api/chat (bloqueante). Ahora usa /api/chat/stream, que
-// devuelve la respuesta en tiempo real (Server-Sent Events) en vez de un
-// solo JSON al final.
-const API_STREAM_URL = 'https://p01--asistente-ia-tributario--qw7xms7w9jfx.code.run/api/chat/stream';
+// Endpoint con streaming (Server-Sent Events) del backend en Northflank.
+const API_STREAM_URL =
+  'https://p01--asistente-ia-tributario--qw7xms7w9jfx.code.run/api/chat/stream';
 
 const ACCESOS_RAPIDOS = [
   {
@@ -20,415 +19,188 @@ const ACCESOS_RAPIDOS = [
   },
 ];
 
-/* -------------------- Render de texto con formato liviano -------------------- */
-function renderTextoFormateado(texto) {
-  const lineas = texto.split('\n');
+/* ---------- Render de texto: ## títulos, **negrita**, listas ---------- */
+function conNegritas(texto) {
+  return texto.split(/(\*\*[^*]+\*\*)/g).map((parte, i) =>
+    parte.startsWith('**') && parte.endsWith('**') && parte.length > 4 ? (
+      <strong key={i} className="font-semibold text-[#5fd3a5]">
+        {parte.slice(2, -2)}
+      </strong>
+    ) : (
+      <React.Fragment key={i}>{parte}</React.Fragment>
+    )
+  );
+}
+
+function renderMarkdown(texto) {
   const bloques = [];
-  let listaActual = null;
-
+  let lista = null;
   const cerrarLista = () => {
-    if (listaActual) {
-      bloques.push(listaActual);
-      listaActual = null;
+    if (lista) {
+      bloques.push(lista);
+      lista = null;
     }
   };
 
-  const conNegritas = (linea) => {
-    const partes = linea.split(/(\*\*[^*]+\*\*)/g);
-    return partes.map((parte, i) =>
-      parte.startsWith('**') && parte.endsWith('**') ? (
-        <strong key={i} className="font-semibold text-[#0F2A1D]">
-          {parte.slice(2, -2)}
-        </strong>
-      ) : (
-        <React.Fragment key={i}>{parte}</React.Fragment>
-      )
-    );
-  };
+  texto.split('\n').forEach((raw) => {
+    const linea = raw.trimEnd();
+    const h = linea.match(/^\s*#{1,4}\s+(.*)$/);
+    const ol = linea.match(/^\s*(\d+)[.)]\s+(.*)$/);
+    const ul = linea.match(/^\s*[-*•]\s+(.*)$/);
 
-  lineas.forEach((linea, idx) => {
-    const trimmed = linea.trim();
-
-    if (!trimmed) {
+    if (h) {
       cerrarLista();
-      return;
-    }
-
-    const matchHeader = trimmed.match(/^(#{1,3})\s+(.*)/);
-    if (matchHeader) {
-      cerrarLista();
-      const nivel = matchHeader[1].length;
-      const Tag = nivel === 1 ? 'h2' : nivel === 2 ? 'h3' : 'h4';
-      bloques.push(
-        <Tag key={idx} className="font-semibold text-[#0F2A1D] mt-5 mb-2 text-lg">
-          {conNegritas(matchHeader[2])}
-        </Tag>
-      );
-      return;
-    }
-
-    const matchNumerado = trimmed.match(/^(\d{1,2})[.)]\s+(.*)/);
-    const matchViñeta = trimmed.match(/^[-•]\s+(.*)/);
-
-    if (matchNumerado || matchViñeta) {
-      const tipo = matchNumerado ? 'ol' : 'ul';
-      const contenido = matchNumerado ? matchNumerado[2] : matchViñeta[1];
-      if (!listaActual || listaActual.type !== tipo) {
+      bloques.push({ tipo: 'h', texto: h[1] });
+    } else if (ol) {
+      if (!lista || lista.tipo !== 'ol') {
         cerrarLista();
-        listaActual = { type: tipo, items: [] };
+        lista = { tipo: 'ol', inicio: parseInt(ol[1], 10), items: [] };
       }
-      listaActual.items.push(contenido);
-      return;
+      lista.items.push(ol[2]);
+    } else if (ul) {
+      if (!lista || lista.tipo !== 'ul') {
+        cerrarLista();
+        lista = { tipo: 'ul', items: [] };
+      }
+      lista.items.push(ul[1]);
+    } else if (!linea.trim()) {
+      cerrarLista();
+    } else {
+      cerrarLista();
+      bloques.push({ tipo: 'p', texto: linea.trim() });
     }
-
-    cerrarLista();
-    bloques.push(
-      <p key={idx} className="leading-relaxed mb-3 last:mb-0 text-[#374151]">
-        {conNegritas(trimmed)}
-      </p>
-    );
   });
   cerrarLista();
 
   return bloques.map((b, i) => {
-    if (b && b.type === 'ol') {
+    if (b.tipo === 'h')
       return (
-        <ol key={`l-${i}`} className="list-decimal list-inside space-y-1.5 mb-3 pl-1 text-[#374151]">
-          {b.items.map((it, j) => (
-            <li key={j}>{conNegritas(it)}</li>
+        <h3 key={i} className="mb-1 mt-4 text-base font-semibold text-white first:mt-0">
+          {conNegritas(b.texto)}
+        </h3>
+      );
+    if (b.tipo === 'ol')
+      return (
+        <ol key={i} start={b.inicio} className="my-2 list-decimal space-y-1 pl-5">
+          {b.items.map((t, j) => (
+            <li key={j}>{conNegritas(t)}</li>
           ))}
         </ol>
       );
-    }
-    if (b && b.type === 'ul') {
+    if (b.tipo === 'ul')
       return (
-        <ul key={`l-${i}`} className="list-disc list-inside space-y-1.5 mb-3 pl-1 text-[#374151]">
-          {b.items.map((it, j) => (
-            <li key={j}>{conNegritas(it)}</li>
+        <ul key={i} className="my-2 list-disc space-y-1 pl-5">
+          {b.items.map((t, j) => (
+            <li key={j}>{conNegritas(t)}</li>
           ))}
         </ul>
       );
-    }
-    return b;
+    return (
+      <p key={i} className="my-2 first:mt-0">
+        {conNegritas(b.texto)}
+      </p>
+    );
   });
 }
 
-/* -------------------- Pantalla de carga inicial -------------------- */
-function PantallaCarga() {
-  return (
-    <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-[#EEFBF5]">
-      <style>{`
-        @keyframes apilar {
-          0%   { transform: translateY(-26px); opacity: 0; }
-          22%  { transform: translateY(0);     opacity: 1; }
-          82%  { transform: translateY(0);     opacity: 1; }
-          100% { transform: translateY(0);     opacity: 0; }
-        }
-        .hoja { animation: apilar 2.4s ease-out infinite; opacity: 0; }
-        .hoja-1 { animation-delay: 0s; }
-        .hoja-2 { animation-delay: 0.35s; }
-        .hoja-3 { animation-delay: 0.7s; }
-      `}</style>
-
-      <svg width="120" height="120" viewBox="0 0 120 120" className="mb-4">
-        {/* Sombra */}
-        <ellipse cx="60" cy="102" rx="34" ry="5" fill="#0F2A1D" opacity="0.08" />
-
-        {/* Hoja de atrás */}
-        <g className="hoja hoja-1">
-          <rect x="26" y="16" width="68" height="46" rx="7" fill="#FFFFFF" stroke="#BFE8D3" strokeWidth="2.5" />
-          <rect x="36" y="22" width="22" height="4" rx="2" fill="#BFE8D3" />
-          <rect x="36" y="30" width="40" height="3" rx="1.5" fill="#E3F5EC" />
-        </g>
-
-        {/* Hoja del medio */}
-        <g className="hoja hoja-2">
-          <rect x="26" y="34" width="68" height="46" rx="7" fill="#FFFFFF" stroke="#7FD1A8" strokeWidth="2.5" />
-          <rect x="36" y="40" width="22" height="4" rx="2" fill="#7FD1A8" />
-          <rect x="36" y="48" width="40" height="3" rx="1.5" fill="#E3F5EC" />
-        </g>
-
-        {/* Hoja de adelante */}
-        <g className="hoja hoja-3">
-          <rect x="26" y="52" width="68" height="46" rx="7" fill="#FFFFFF" stroke="#2EB37C" strokeWidth="3" />
-          <rect x="36" y="60" width="24" height="5" rx="2.5" fill="#0F2A1D" />
-          <rect x="36" y="71" width="46" height="3.5" rx="1.75" fill="#D3F0E1" />
-          <rect x="36" y="79" width="38" height="3.5" rx="1.75" fill="#D3F0E1" />
-          <rect x="36" y="87" width="30" height="3.5" rx="1.75" fill="#D3F0E1" />
-        </g>
-      </svg>
-
-      <p className="text-[#0F2A1D] font-medium mb-3">Organizando la normativa tributaria...</p>
-      <div className="flex gap-1.5">
-        <span className="w-2 h-2 rounded-full bg-[#2EB37C] animate-bounce [animation-delay:-0.3s]" />
-        <span className="w-2 h-2 rounded-full bg-[#2EB37C] animate-bounce [animation-delay:-0.15s]" />
-        <span className="w-2 h-2 rounded-full bg-[#2EB37C] animate-bounce" />
-      </div>
-    </div>
-  );
-}
-
-/* -------------------- Barra lateral -------------------- */
-function Sidebar({ abierta, onCerrar, historial }) {
-  return (
-    <>
-      {abierta && (
-        <div className="fixed inset-0 bg-black/20 z-20 md:hidden" onClick={onCerrar} />
-      )}
-      <aside
-        className={`fixed md:static z-30 h-full w-64 bg-white border-r border-[#E5EFE9]
-        flex flex-col transition-transform duration-200
-        ${abierta ? 'translate-x-0' : '-translate-x-full'} md:translate-x-0`}
-      >
-        <div className="p-4 flex items-center gap-2 border-b border-[#E5EFE9]">
-          <div className="w-9 h-9 rounded-xl bg-[#2EB37C] flex items-center justify-center text-white font-bold text-sm">
-            AT
-          </div>
-          <span className="font-semibold text-[#0F2A1D]">Asistente Tributario</span>
-        </div>
-
-        <nav className="flex-1 p-3 space-y-1 overflow-y-auto">
-          <button className="w-full text-left px-3 py-2.5 rounded-xl bg-[#EAFBF3] text-[#0F2A1D] font-medium text-sm">
-            Asistente
-          </button>
-
-          <div className="text-xs uppercase tracking-wide text-[#9CA8A1] mt-4 mb-1 px-3">
-            Historial de esta sesión
-          </div>
-          {historial.length === 0 ? (
-            <p className="px-3 text-sm text-[#9CA8A1]">Tus preguntas van a aparecer aquí.</p>
-          ) : (
-            historial.map((h, i) => (
-              <button
-                key={i}
-                className="w-full text-left px-3 py-2 rounded-xl text-sm text-[#5B6B62] hover:bg-[#F3FAF6] truncate"
-              >
-                {h}
-              </button>
-            ))
-          )}
-
-          <div className="text-xs uppercase tracking-wide text-[#9CA8A1] mt-6 mb-1 px-3">
-            Próximamente
-          </div>
-          <div className="px-3 py-2 rounded-xl text-sm text-[#C3CCC7] cursor-not-allowed flex items-center justify-between">
-            Buscador normativo
-            <LockIcon />
-          </div>
-          <div className="px-3 py-2 rounded-xl text-sm text-[#C3CCC7] cursor-not-allowed flex items-center justify-between">
-            Casos guardados
-            <LockIcon />
-          </div>
-        </nav>
-
-        <div className="p-3 border-t border-[#E5EFE9] text-xs text-[#9CA8A1]">
-          Las respuestas se basan en la normativa cargada. Verifica siempre la fuente.
-        </div>
-      </aside>
-    </>
-  );
-}
-
-function LockIcon() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-      <rect x="4" y="11" width="16" height="9" rx="2" />
-      <path d="M8 11V7a4 4 0 0 1 8 0v4" />
-    </svg>
-  );
-}
-
-/* -------------------- Referencias -------------------- */
-function Referencias({ fuentes }) {
-  if (!fuentes || fuentes.length === 0) return null;
-  return (
-    <div className="mt-4 pt-3 border-t border-[#E5EFE9] flex flex-wrap gap-2">
-      {fuentes.map((f, i) => (
-        <span
-          key={i}
-          className="text-xs bg-[#EAFBF3] text-[#2E8F63] px-2.5 py-1 rounded-full border border-[#D3F0E1]"
-        >
-          {f.fuente}
-          {f.categoria && f.categoria !== 'por_definir' ? ` · ${f.categoria.replace(/_/g, ' ')}` : ''}
-        </span>
-      ))}
-    </div>
-  );
-}
-
-/* -------------------- Preguntas relacionadas -------------------- */
-function SugerenciasRelacionadas({ sugerencias, esUltima, onElegir }) {
-  if (!esUltima || !sugerencias || sugerencias.length === 0) return null;
-  return (
-    <div className="mt-4 pt-4 border-t border-[#E5EFE9]">
-      <p className="text-xs font-medium text-[#9CA8A1] mb-2">También te puede interesar</p>
-      <div className="flex flex-col gap-2">
-        {sugerencias.map((s, i) => (
-          <button
-            key={i}
-            onClick={() => onElegir(s)}
-            className="text-left text-sm px-3 py-2 rounded-xl border border-[#E5EFE9] text-[#374151] hover:border-[#2EB37C]/50 hover:bg-[#F3FAF6] transition-colors"
-          >
-            {s}
-          </button>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-/* -------------------- Indicador de "escribiendo" -------------------- */
-const MENSAJES_CARGA = [
-  'Buscando en la normativa cargada...',
-  'Revisando fuentes relevantes...',
-  'Redactando la respuesta...',
-];
-
-function IndicadorEscribiendo() {
-  const [mensajeIdx, setMensajeIdx] = useState(0);
-
-  useEffect(() => {
-    const intervalo = setInterval(() => {
-      setMensajeIdx((i) => (i + 1) % MENSAJES_CARGA.length);
-    }, 2200);
-    return () => clearInterval(intervalo);
-  }, []);
-
-  return (
-    <div className="flex items-center gap-3 text-[#6B7280] text-sm bg-white rounded-2xl px-4 py-3 w-fit shadow-sm">
-      <div className="flex gap-1">
-        <span className="w-2 h-2 rounded-full bg-[#2EB37C] animate-bounce [animation-delay:-0.3s]" />
-        <span className="w-2 h-2 rounded-full bg-[#2EB37C] animate-bounce [animation-delay:-0.15s]" />
-        <span className="w-2 h-2 rounded-full bg-[#2EB37C] animate-bounce" />
-      </div>
-      <span>{MENSAJES_CARGA[mensajeIdx]}</span>
-    </div>
-  );
-}
-
-/* -------------------- Componente principal -------------------- */
+/* ------------------------------ Componente ------------------------------ */
 export default function ChatTributario() {
-  const [cargandoApp, setCargandoApp] = useState(true);
   const [pregunta, setPregunta] = useState('');
   const [chatLog, setChatLog] = useState([]);
   const [loading, setLoading] = useState(false);
-  const [sidebarAbierta, setSidebarAbierta] = useState(false);
   const finRef = useRef(null);
+  const abortRef = useRef(null);
 
   useEffect(() => {
-    const t = setTimeout(() => setCargandoApp(false), 1600);
-    return () => clearTimeout(t);
-  }, []);
+    finRef.current?.scrollIntoView({ behavior: 'auto', block: 'end' });
+  }, [chatLog]);
 
-  useEffect(() => {
-    finRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [chatLog, loading]);
-
-  const enviarPregunta = async (texto) => {
-    const userMessage = texto.trim();
-    if (!userMessage) return;
-
+  const nuevaConversacion = () => {
+    abortRef.current?.abort();
+    setChatLog([]);
     setPregunta('');
-    setChatLog((prev) => [...prev, { remitente: 'usuario', texto: userMessage }]);
-    setLoading(true);
+    setLoading(false);
+  };
 
-    // Mensaje de la IA que se va llenando a medida que llega el streaming.
-    // Mientras texto === '' seguimos mostrando el indicador de "escribiendo"
-    // (ver más abajo, en el render); en cuanto llega el primer pedazo del
-    // stream, el indicador se reemplaza por la burbuja con el texto real.
-    setChatLog((prev) => [...prev, { remitente: 'ia', texto: '', fuentes: [], sugerencias: [] }]);
+  const enviar = async (texto) => {
+    const q = texto.trim();
+    if (!q || loading) return;
+
+    const idIA = Date.now() + 1;
+    setPregunta('');
+    setLoading(true);
+    setChatLog((prev) => [
+      ...prev,
+      { id: idIA - 1, rol: 'usuario', texto: q },
+      { id: idIA, rol: 'ia', texto: '', estado: 'Enviando tu consulta...' },
+    ]);
+
+    const actualizar = (cambios) =>
+      setChatLog((prev) =>
+        prev.map((m) =>
+          m.id === idIA ? { ...m, ...(typeof cambios === 'function' ? cambios(m) : cambios) } : m
+        )
+      );
+
+    // Procesa un evento SSE: data: {"tipo": "...", "data": ...}
+    const procesarEvento = (bloque) => {
+      const linea = bloque.split('\n').find((l) => l.startsWith('data:'));
+      if (!linea) return;
+      let evento;
+      try {
+        evento = JSON.parse(linea.slice(5).trim());
+      } catch {
+        return;
+      }
+      const { tipo, data } = evento;
+
+      if (tipo === 'estado') {
+        actualizar({ estado: data });
+      } else if (tipo === 'texto') {
+        actualizar((m) => ({ texto: m.texto + data }));
+      } else if (tipo === 'fin') {
+        actualizar({
+          fuentes: data.fuentes || [],
+          sugerencias: data.sugerencias || [],
+          degradado: !!data.degradado,
+        });
+      } else if (tipo === 'error') {
+        actualizar({ error: data?.mensaje || 'Ocurrió un error al procesar la consulta.' });
+      }
+    };
+
+    const controller = new AbortController();
+    abortRef.current = controller;
 
     try {
       const response = await fetch(API_STREAM_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ pregunta: userMessage }),
+        body: JSON.stringify({ pregunta: q }),
+        signal: controller.signal,
       });
 
       if (!response.ok || !response.body) {
-        throw new Error('Respuesta no válida del servidor');
+        throw new Error(`HTTP ${response.status}`);
       }
 
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
       let buffer = '';
 
-      // El backend manda eventos SSE: bloques separados por una línea en
-      // blanco, cada uno con una línea "data: {...}". Vamos leyendo el
-      // stream de a pedazos y separando eventos completos del buffer; el
-      // último trozo de cada lectura puede venir incompleto, así que se
-      // guarda para unirlo con el próximo chunk.
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
-
-        buffer += decoder.decode(value, { stream: true });
+        buffer += decoder.decode(value, { stream: true }).replace(/\r\n/g, '\n');
         const eventos = buffer.split('\n\n');
         buffer = eventos.pop();
-
-        for (const bloque of eventos) {
-          const linea = bloque.split('\n').find((l) => l.startsWith('data: '));
-          if (!linea) continue;
-
-          let evento;
-          try {
-            evento = JSON.parse(linea.slice(6));
-          } catch {
-            continue;
-          }
-
-          if (evento.tipo === 'texto') {
-            setChatLog((prev) => {
-              const copia = [...prev];
-              const ultimo = copia[copia.length - 1];
-              copia[copia.length - 1] = { ...ultimo, texto: ultimo.texto + evento.data };
-              return copia;
-            });
-          } else if (evento.tipo === 'fin') {
-            setChatLog((prev) => {
-              const copia = [...prev];
-              const ultimo = copia[copia.length - 1];
-              copia[copia.length - 1] = {
-                ...ultimo,
-                fuentes: evento.data.fuentes || [],
-                sugerencias: evento.data.sugerencias || [],
-                degradado: evento.data.degradado,
-              };
-              return copia;
-            });
-          } else if (evento.tipo === 'error') {
-            setChatLog((prev) => {
-              const copia = [...prev];
-              copia[copia.length - 1] = {
-                remitente: 'ia',
-                texto: 'No pude procesar tu consulta. Intenta de nuevo en unos segundos.',
-                error: true,
-              };
-              return copia;
-            });
-          }
-        }
+        eventos.forEach(procesarEvento);
       }
+      if (buffer.trim()) procesarEvento(buffer);
     } catch (error) {
-      setChatLog((prev) => {
-        const copia = [...prev];
-        const ultimo = copia[copia.length - 1];
-        // Si ya había texto parcial mostrado, lo dejamos y avisamos que se
-        // cortó, en vez de reemplazarlo por el mensaje de error genérico.
-        if (ultimo && ultimo.remitente === 'ia' && ultimo.texto) {
-          copia[copia.length - 1] = {
-            ...ultimo,
-            texto: ultimo.texto + '\n\n_(la respuesta se interrumpió, intenta de nuevo)_',
-          };
-        } else {
-          copia[copia.length - 1] = {
-            remitente: 'ia',
-            texto: 'No se pudo conectar con el servidor. Revisa tu conexión e intenta de nuevo.',
-            error: true,
-          };
-        }
-        return copia;
-      });
+      if (error.name !== 'AbortError') {
+        actualizar({ error: 'No se pudo conectar con el servidor. Intenta de nuevo en unos segundos.' });
+      }
     } finally {
       setLoading(false);
     }
@@ -436,132 +208,155 @@ export default function ChatTributario() {
 
   const handleSubmit = (e) => {
     e.preventDefault();
-    enviarPregunta(pregunta);
+    enviar(pregunta);
   };
 
-  const handleKeyDown = (e) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      enviarPregunta(pregunta);
-    }
-  };
-
-  const preguntasUsuario = chatLog.filter((m) => m.remitente === 'usuario').map((m) => m.texto);
-
-  if (cargandoApp) return <PantallaCarga />;
+  const historial = chatLog.filter((m) => m.rol === 'usuario');
+  const ultimo = chatLog[chatLog.length - 1];
 
   return (
-    <div className="flex h-screen bg-[#EEFBF5] text-[#0F2A1D] font-sans overflow-hidden">
-      <Sidebar abierta={sidebarAbierta} onCerrar={() => setSidebarAbierta(false)} historial={preguntasUsuario} />
-
-      <div className="flex-1 flex flex-col min-w-0">
-        <header className="md:hidden flex items-center gap-3 p-4 bg-white border-b border-[#E5EFE9]">
-          <button onClick={() => setSidebarAbierta(true)} aria-label="Abrir menú">
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M3 6h18M3 12h18M3 18h18" />
-            </svg>
-          </button>
+    <div className="flex h-screen bg-[#131517] font-sans text-[#e6e8ea]">
+      {/* Sidebar */}
+      <aside className="hidden w-64 shrink-0 flex-col border-r border-[#26292d] bg-[#17191c] md:flex">
+        <div className="flex items-center gap-3 border-b border-[#26292d] px-4 py-4">
+          <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-[#3fbf8f] text-sm font-bold text-[#0d2a1e]">
+            AT
+          </div>
           <span className="font-semibold">Asistente Tributario</span>
-        </header>
+        </div>
 
-        <div className="flex-1 overflow-y-auto">
-          <div className="max-w-3xl mx-auto px-4 md:px-6 py-8">
+        <div className="p-3">
+          <button
+            onClick={nuevaConversacion}
+            className="w-full rounded-lg bg-[#1e2124] px-3 py-2 text-left text-sm font-medium transition-colors hover:bg-[#26292d] focus-visible:outline-2 focus-visible:outline-[#3fbf8f]"
+          >
+            Nueva conversación
+          </button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto px-4 py-2">
+          <p className="mb-2 text-xs text-[#9ba1a6]">Historial de esta sesión</p>
+          {historial.length === 0 ? (
+            <p className="text-sm text-[#9ba1a6]">Tus preguntas van a aparecer aquí.</p>
+          ) : (
+            <ul className="space-y-1">
+              {historial.map((m) => (
+                <li key={m.id} className="truncate text-sm text-[#e6e8ea]/90" title={m.texto}>
+                  {m.texto}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+
+        <div className="border-t border-[#26292d] px-4 py-3 text-xs text-[#9ba1a6]">
+          Las respuestas se basan en la normativa cargada. Verifica siempre la fuente.
+        </div>
+      </aside>
+
+      {/* Zona principal */}
+      <main className="flex min-w-0 flex-1 flex-col">
+        <div className="flex-1 overflow-y-auto px-4">
+          <div className="mx-auto w-full max-w-3xl space-y-4 py-6">
             {chatLog.length === 0 ? (
-              <div className="mt-8 md:mt-16">
-                <h1 className="text-2xl md:text-3xl font-semibold text-[#0F2A1D] mb-2">
-                  Hola, ¿en qué te ayudo hoy?
-                </h1>
-                <p className="text-[#6B7280] mb-8">
+              <div className="pt-10">
+                <h2 className="text-3xl font-semibold">Hola, ¿en qué te ayudo hoy?</h2>
+                <p className="mt-2 text-[#9ba1a6]">
                   Pregunta lo que necesites sobre normativa tributaria peruana, o elige un acceso rápido.
                 </p>
-                <div className="grid gap-3 sm:grid-cols-1">
-                  {ACCESOS_RAPIDOS.map((a, i) => (
+                <div className="mt-8 space-y-3">
+                  {ACCESOS_RAPIDOS.map((a) => (
                     <button
-                      key={i}
-                      onClick={() => enviarPregunta(a.titulo)}
-                      className="text-left p-4 rounded-2xl bg-white border border-[#E5EFE9] hover:border-[#2EB37C]/50 hover:shadow-md transition-all shadow-sm"
+                      key={a.titulo}
+                      onClick={() => enviar(a.titulo)}
+                      className="block w-full rounded-xl border border-[#26292d] bg-[#1e2124] px-4 py-3 text-left transition-colors hover:border-[#3fbf8f] focus-visible:outline-2 focus-visible:outline-[#3fbf8f]"
                     >
-                      <p className="text-[#0F2A1D] font-medium mb-1">{a.titulo}</p>
-                      <p className="text-sm text-[#6B7280]">{a.detalle}</p>
+                      <span className="block font-medium">{a.titulo}</span>
+                      <span className="block text-sm text-[#9ba1a6]">{a.detalle}</span>
                     </button>
                   ))}
                 </div>
               </div>
             ) : (
-              <div className="space-y-6">
-                {chatLog.map((msg, index) => {
-                  const esUltimoMensaje = index === chatLog.length - 1;
-
-                  if (msg.remitente === 'usuario') {
-                    return (
-                      <div key={index} className="flex justify-end">
-                        <div className="max-w-lg bg-[#2EB37C] text-white px-4 py-2.5 rounded-3xl rounded-br-md shadow-sm">
-                          {msg.texto}
-                        </div>
-                      </div>
-                    );
-                  }
-
-                  // Mensaje de la IA todavía sin ningún pedazo de texto: se
-                  // muestra el indicador animado en vez de una burbuja vacía.
-                  if (loading && esUltimoMensaje && !msg.texto) {
-                    return <IndicadorEscribiendo key={index} />;
-                  }
-
-                  return (
-                    <div
-                      key={index}
-                      className={`rounded-3xl p-5 bg-white shadow-sm ${msg.error ? 'text-[#C0523F]' : ''}`}
-                    >
-                      {msg.degradado && (
-                        <span className="inline-block mb-2 text-xs font-medium text-[#B8860B] bg-[#FDF3D9] px-2 py-0.5 rounded-full">
-                          Respuesta sin pulir — alta demanda
-                        </span>
-                      )}
-                      <div>{renderTextoFormateado(msg.texto)}</div>
-                      <Referencias fuentes={msg.fuentes} />
-                      <SugerenciasRelacionadas
-                        sugerencias={msg.sugerencias}
-                        esUltima={esUltimoMensaje}
-                        onElegir={enviarPregunta}
-                      />
+              chatLog.map((msg) =>
+                msg.rol === 'usuario' ? (
+                  <div key={msg.id} className="flex justify-end">
+                    <div className="max-w-[85%] rounded-2xl bg-[#5fd3a5] px-4 py-3 font-medium text-[#0d2a1e]">
+                      {msg.texto}
                     </div>
-                  );
-                })}
+                  </div>
+                ) : (
+                  <div key={msg.id} className="flex justify-start">
+                    <div className="max-w-[85%] rounded-2xl border border-[#26292d] bg-[#1e2124] px-4 py-3 leading-relaxed">
+                      {msg.texto ? (
+                        renderMarkdown(msg.texto)
+                      ) : !msg.error ? (
+                        <span className="animate-pulse text-[#9ba1a6]">{msg.estado}</span>
+                      ) : null}
+
+                      {msg.error && <p className="mt-2 text-red-300">{msg.error}</p>}
+
+                      {msg.degradado && (
+                        <p className="mt-3 text-xs text-amber-300">
+                          Respuesta resumida: el servicio de redacción estaba saturado.
+                        </p>
+                      )}
+
+                      {msg.fuentes?.length > 0 && (
+                        <p className="mt-3 border-t border-[#26292d] pt-2 text-xs text-[#9ba1a6]">
+                          Fuentes: {[...new Set(msg.fuentes.map((f) => f.fuente))].join(', ')}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                )
+              )
+            )}
+
+            {/* Preguntas sugeridas por el asistente */}
+            {!loading && ultimo?.rol === 'ia' && ultimo.sugerencias?.length > 0 && (
+              <div className="flex flex-wrap gap-2 pt-1">
+                {ultimo.sugerencias.map((s) => (
+                  <button
+                    key={s}
+                    onClick={() => enviar(s)}
+                    className="rounded-full border border-[#26292d] bg-[#1e2124] px-3 py-1.5 text-left text-sm text-[#5fd3a5] transition-colors hover:border-[#3fbf8f] focus-visible:outline-2 focus-visible:outline-[#3fbf8f]"
+                  >
+                    {s}
+                  </button>
+                ))}
               </div>
             )}
             <div ref={finRef} />
           </div>
         </div>
 
-        <div className="bg-[#EEFBF5] pb-4 pt-2">
-          <form onSubmit={handleSubmit} className="max-w-3xl mx-auto px-4 md:px-6">
-            <div className="flex items-end gap-2 bg-white border border-[#E5EFE9] rounded-3xl px-4 py-2 shadow-sm focus-within:border-[#2EB37C]/60">
-              <textarea
-                value={pregunta}
-                onChange={(e) => setPregunta(e.target.value)}
-                onKeyDown={handleKeyDown}
-                rows={1}
-                placeholder="Escribe tu consulta sobre normativa tributaria..."
-                className="flex-1 bg-transparent resize-none outline-none text-[#0F2A1D] placeholder-[#9CA8A1] py-2 max-h-32"
-              />
-              <button
-                type="submit"
-                disabled={loading || !pregunta.trim()}
-                className="shrink-0 bg-[#2EB37C] hover:bg-[#29A06F] disabled:opacity-40 disabled:hover:bg-[#2EB37C] text-white font-medium px-5 py-2 rounded-full transition-colors flex items-center gap-1.5"
-              >
-                Enviar
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5">
-                  <path d="M5 12h14M13 6l6 6-6 6" />
-                </svg>
-              </button>
-            </div>
-            <p className="text-xs text-[#9CA8A1] mt-2 text-center">
-              El asistente puede cometer errores. Verifica la normativa citada antes de aplicarla.
-            </p>
+        {/* Input */}
+        <footer className="px-4 pb-3 pt-2">
+          <form
+            onSubmit={handleSubmit}
+            className="mx-auto flex w-full max-w-3xl items-center gap-2 rounded-full border border-[#26292d] bg-[#1e2124] p-2 pl-5"
+          >
+            <input
+              type="text"
+              value={pregunta}
+              onChange={(e) => setPregunta(e.target.value)}
+              placeholder="Escribe tu consulta sobre normativa tributaria..."
+              className="flex-1 bg-transparent text-[#e6e8ea] placeholder:text-[#9ba1a6] focus:outline-none"
+            />
+            <button
+              type="submit"
+              disabled={loading || !pregunta.trim()}
+              className="rounded-full bg-[#3fbf8f] px-5 py-2 font-medium text-[#0d2a1e] transition-opacity hover:opacity-90 disabled:opacity-40"
+            >
+              Enviar
+            </button>
           </form>
-        </div>
-      </div>
+          <p className="mt-2 text-center text-xs text-[#9ba1a6]">
+            El asistente puede cometer errores. Verifica la normativa citada antes de aplicarla.
+          </p>
+        </footer>
+      </main>
     </div>
   );
 }
